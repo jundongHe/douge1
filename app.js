@@ -22,7 +22,7 @@ function makeDemo(){
 }
 function resetImageSettings(){crop={x:0,y:0,width:1,height:1};processedReady=false;pickingBackground=false;$('original').style.cursor='';$('processedImage').removeAttribute('src');$('cropSummary').textContent='当前使用完整图片';}
 function photoSettings(){return {enabled:$('photoMode').checked,backgroundMode:$('backgroundMode').value,backgroundColor:$('backgroundColor').value.slice(1).match(/../g).map(v=>parseInt(v,16)),tolerance:+$('backgroundTolerance').value,smooth:+$('detailSmooth').value,merge:+$('colorMerge').value,cleanup:+$('speckleClean').value,protectDetails:$('protectDetails').checked};}
-function lineartSettings(){return {threshold:(100-+$('lineartSensitivity').value)*5,thickness:+$('lineartThickness').value};}
+function lineartSettings(){return {threshold:(100-+$('lineartSensitivity').value)*5,thickness:+$('lineartThickness').value,fill:$('lineartAutofill').checked};}
 function setPhotoMode(enabled,regenerate=true){
   const wasEnabled=$('photoMode').checked;$('photoMode').checked=enabled;$('photoOptions').hidden=!enabled;
   if(enabled&&!wasEnabled){classicColors=+$('colors').value;$('colors').value=24;}else if(!enabled&&wasEnabled)$('colors').value=classicColors;
@@ -53,6 +53,15 @@ function generate(){
     if(!x||c.width!==cw||c.height!==ch)throw Error('设备无法分配此尺寸画布，请减小尺寸');
     x.imageSmoothingEnabled=true;x.imageSmoothingQuality='high';x.drawImage(source,rect.x,rect.y,rect.width,rect.height,0,0,cw,ch);
     const rgba=x.getImageData(0,0,cw,ch).data;
+    // Fill colors come from a second grid-sized canvas through the same
+    // photo pipeline, so fill matches normal photo mode exactly.
+    let colorRgba=null;
+    if(lineartOn&&$('lineartAutofill').checked){
+      const gc=document.createElement('canvas');gc.width=w;gc.height=h;const gx=gc.getContext('2d',{willReadFrequently:true});
+      if(!gx||gc.width!==w||gc.height!==h)throw Error('设备无法分配此尺寸画布，请减小尺寸');
+      gx.imageSmoothingEnabled=true;gx.imageSmoothingQuality='high';gx.drawImage(source,rect.x,rect.y,rect.width,rect.height,0,0,w,h);
+      colorRgba=gx.getImageData(0,0,w,h).data;
+    }
     const worker=new Worker(new URL('./quantize-worker.js',import.meta.url),{type:'module'});generationWorker=worker;
     $('generate').disabled=true;$('generate').textContent='正在生成…';$('cancelGenerate').hidden=false;$('generationProgress').textContent=`${w} × ${h} · ${(w*h).toLocaleString()} 格 · 准备配色…`;
     worker.onmessage=({data})=>{if(generationWorker!==worker)return;
@@ -60,10 +69,11 @@ function generate(){
       if(data.type==='error'){stopGeneration();$('generationProgress').textContent='生成失败，请调整尺寸后重试';notify(data.message);return;}
       pattern=data.pattern;stopGeneration();
       try{const processed=document.createElement('canvas');processed.width=w;processed.height=h;processed.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(data.processed),w,h),0,0);$('processedImage').src=processed.toDataURL();processedReady=true;}catch{processedReady=false;$('processedImage').removeAttribute('src');}
-      selected=pattern.palette.length?(lineartOn?-1:0):-1;history=[];zoom=0;setTab('pattern');refresh();const stats=pattern.photoStats||{};$('generationProgress').textContent=lineartOn?`已生成 ${w} × ${h} 格，线稿 ${stats.lineCells||0} 格`:`已生成 ${w} × ${h} 格，${pattern.palette.length} 色`+($('photoMode').checked?` · 去背景 ${stats.removedPixels||0} 格，清理 ${stats.cleanedCells||0} 格`:'');notify(lineartOn?'线稿已生成，已进入擦除模式：按住拖动可擦掉不需要的线条':'图案已生成，选一颗颜色开始微调吧');
+      selected=pattern.palette.length?(lineartOn?-1:0):-1;history=[];zoom=0;setTab('pattern');refresh();const stats=pattern.photoStats||{};$('generationProgress').textContent=lineartOn?(stats.fillColors?`已生成 ${w} × ${h} 格，线稿 ${stats.lineCells||0} 格，填色 ${stats.fillColors} 色`:`已生成 ${w} × ${h} 格，线稿 ${stats.lineCells||0} 格`):`已生成 ${w} × ${h} 格，${pattern.palette.length} 色`+($('photoMode').checked?` · 去背景 ${stats.removedPixels||0} 格，清理 ${stats.cleanedCells||0} 格`:'');notify(lineartOn?(stats.fillColors?'已按原图自动填色，点色板可改色，留空可擦除':'线稿已生成，已进入擦除模式：按住拖动可擦掉不需要的线条'):'图案已生成，选一颗颜色开始微调吧');
     };
     worker.onerror=()=>{if(generationWorker!==worker)return;stopGeneration();$('generationProgress').textContent='生成失败';notify('后台生成失败，可能是设备内存不足，请减小尺寸后重试');};
-    worker.postMessage({width:w,height:h,hiWidth:cw,hiHeight:ch,colors,photo:photoSettings(),lineart:lineartOn?lineartSettings():null,buffer:rgba.buffer},[rgba.buffer]);
+    const transfer=[rgba.buffer];if(colorRgba)transfer.push(colorRgba.buffer);
+    worker.postMessage({width:w,height:h,hiWidth:cw,hiHeight:ch,colors,photo:photoSettings(),lineart:lineartOn?lineartSettings():null,buffer:rgba.buffer,colorBuffer:colorRgba?colorRgba.buffer:null},transfer);
   }catch(e){stopGeneration();$('generationProgress').textContent='未生成，请检查尺寸';notify('生成失败：'+e.message);}
 }
 function refresh(){
@@ -77,7 +87,7 @@ function refresh(){
     b.append(sw,label,qty);b.onclick=()=>{selected=i;refresh();};$('palette').append(b);
   });
   $('eraser').classList.toggle('active',selected===-1);$('undo').disabled=history.length===0;
-  $('editHint').textContent=selected<0?($('lineartMode').checked?'线稿模式：按住拖动擦除不需要的线条':'留空模式：点击网格移除一颗豆'):`当前 ${pattern.palette[selected].id} · 点击网格微调`;
+  $('editHint').textContent=selected<0?($('lineartMode').checked?((pattern.photoStats||{}).fillColors?'线稿已填色：点色板选颜色改色，留空可擦除':'线稿模式：按住拖动擦除不需要的线条'):'留空模式：点击网格移除一颗豆'):`当前 ${pattern.palette[selected].id} · 点击网格微调`;
   draw();
 }
 function cellColor(index){return index<0?null:pattern.palette[index].hex;}
@@ -158,6 +168,7 @@ $('exportPng').onclick=exportPng;$('exportCsv').onclick=()=>{if(!pattern){notify
 $('exportSvg').onclick=()=>{if(!pattern){notify('请等待图案生成完成');return;}try{download(new Blob([svg(pattern)],{type:'image/svg+xml;charset=utf-8'}),`douge-${pattern.width}x${pattern.height}.svg`);notify('矢量图纸已导出，可放大或打印');}catch{notify('设备内存不足，无法导出此图，请减小尺寸');}};
 $('photoMode').onchange=()=>{const enabled=$('photoMode').checked;$('photoMode').checked=!enabled;setPhotoMode(enabled);};
 $('lineartMode').onchange=()=>{$('lineartOptions').hidden=!$('lineartMode').checked;generate();};
+$('lineartAutofill').onchange=dirtyPhotoSettings;
 for(const [id,output] of [['lineartSensitivity','lineartSensitivityValue'],['lineartThickness','lineartThicknessValue']])$(id).oninput=()=>{$(output).textContent=$(id).value;dirtyPhotoSettings();};
 for(const [id,output] of [['backgroundTolerance','backgroundToleranceValue'],['detailSmooth','detailSmoothValue'],['colorMerge','colorMergeValue'],['speckleClean','speckleCleanValue']])$(id).oninput=()=>{$(output).textContent=id==='speckleClean'?['关闭','轻度','中度','较强'][+$(id).value]:$(id).value;dirtyPhotoSettings();};
 for(const id of ['backgroundMode','backgroundColor','protectDetails'])$(id).onchange=dirtyPhotoSettings;

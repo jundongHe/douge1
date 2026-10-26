@@ -67,3 +67,17 @@ export function downsampleLineMask(mask, srcW, srcH, dstW, dstH) {
   }
   return {pixels, lineCells};
 }
+// Merge a grid line mask with a color pattern: black lines win, other cells
+// keep their photo colors (shifted by one for the black entry), and colors
+// left unused after the override are dropped so ids stay sequential.
+export function mergeLineArtWithColors(grid, colorPattern) {
+  if (!grid.lineCells) return {palette: colorPattern.palette, cells: colorPattern.cells, fillColors: colorPattern.palette.length};
+  const black = {id: 'C01', rgb: [35, 30, 40], hex: '#231E28'};
+  let palette = [black, ...colorPattern.palette.map(p => ({...p}))];
+  let cells = colorPattern.cells.map((c, i) => grid.pixels[i * 4 + 3] >= 128 ? 0 : (c >= 0 ? c + 1 : -1));
+  const used = [...new Set(cells.filter(c => c >= 0))].sort((a, b) => a - b);
+  const remap = new Map(used.map((v, i) => [v, i]));
+  palette = used.map((v, i) => ({...palette[v], id: `C${String(i + 1).padStart(2, '0')}`}));
+  cells = cells.map(c => c < 0 ? -1 : remap.get(c));
+  return {palette, cells, fillColors: palette.length - 1};
+}
