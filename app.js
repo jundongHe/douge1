@@ -156,12 +156,16 @@ for(const id of ['grid','labels','beads'])$(id).onchange=draw;
 $('patternTab').onclick=()=>setTab('pattern');$('processedTab').onclick=()=>setTab('processed');$('originalTab').onclick=()=>{pickingBackground=false;$('original').style.cursor='';setTab('original');};
 $('eraser').onclick=()=>{selected=-1;refresh();};$('undo').onclick=()=>{const prev=history.pop();if(prev){for(const cell of prev)pattern.cells[cell.index]=cell.old;refresh();}};
 let stroke=null;
+let pinch=null;const pointers=new Map();
 function cellFromEvent(e){const r=preview.getBoundingClientRect(),x=Math.floor((e.clientX-r.left)/r.width*pattern.width),y=Math.floor((e.clientY-r.top)/r.height*pattern.height);if(x<0||x>=pattern.width||y<0||y>=pattern.height)return -1;return y*pattern.width+x;}
 function applyCell(index){if(index<0)return;const old=pattern.cells[index];if(old===selected)return;stroke.push({index,old});pattern.cells[index]=selected;}
-preview.onpointerdown=e=>{if(!pattern)return;preview.setPointerCapture(e.pointerId);stroke=[];applyCell(cellFromEvent(e));if(stroke.length)refresh();};
-preview.onpointermove=e=>{if(!stroke)return;const before=stroke.length;applyCell(cellFromEvent(e));if(stroke.length>before)refresh();};
+function pinchDistance(){const [a,b]=[...pointers.values()];return Math.hypot(a.x-b.x,a.y-b.y);}
+function cancelStroke(){if(stroke){for(const cell of stroke)pattern.cells[cell.index]=cell.old;stroke=null;refresh();}}
+preview.onpointerdown=e=>{if(!pattern)return;preview.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pointers.size===2){cancelStroke();pinch={dist:pinchDistance(),base:zoom||parseFloat(preview.style.width)/preview.width||1};}else if(pointers.size<2){stroke=[];applyCell(cellFromEvent(e));if(stroke.length)refresh();}};
+preview.onpointermove=e=>{if(!pointers.has(e.pointerId))return;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});if(pointers.size>=2&&pinch){zoom=Math.min(3,Math.max(.1,pinch.base*pinchDistance()/pinch.dist));draw();return;}if(!stroke)return;const before=stroke.length;applyCell(cellFromEvent(e));if(stroke.length>before)refresh();};
 function endStroke(){if(stroke&&stroke.length){history.push(stroke);if(history.length>200)history.shift();}stroke=null;$('undo').disabled=history.length===0;}
-for(const event of ['pointerup','pointercancel','lostpointercapture'])preview.addEventListener(event,endStroke);
+function endPointer(e){pointers.delete(e.pointerId);if(pointers.size<2)pinch=null;endStroke();}
+for(const event of ['pointerup','pointercancel','lostpointercapture'])preview.addEventListener(event,endPointer);
 preview.addEventListener('wheel',e=>{if(!pattern)return;e.preventDefault();const base=zoom||parseFloat(preview.style.width)/preview.width;zoom=e.deltaY<0?Math.min(3,base*1.15):Math.max(.1,base/1.15);draw();},{passive:false});
 $('zoomIn').onclick=()=>{zoom=Math.min(3,(zoom||parseFloat(preview.style.width)/preview.width)*1.3);draw();};$('zoomOut').onclick=()=>{zoom=Math.max(.1,(zoom||parseFloat(preview.style.width)/preview.width)/1.3);draw();};$('fit').onclick=()=>{zoom=0;draw();};
 $('exportPng').onclick=exportPng;$('exportCsv').onclick=()=>{if(!pattern){notify('请等待图案生成完成');return;}download(new Blob([csv(pattern)],{type:'text/csv;charset=utf-8'}),'douge-colors.csv');notify('用豆清单已导出');};
