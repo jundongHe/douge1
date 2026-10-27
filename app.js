@@ -136,6 +136,8 @@ function exportPng(){
   }catch{notify('此图超出设备 PNG 能力，请使用大图矢量图纸 SVG');}
 }
 $('file').onchange=e=>loadFile(e.target.files[0]);
+$('cameraFile').onchange=e=>loadFile(e.target.files[0]);
+$('cameraUpload').onclick=()=>$('cameraFile').click();
 $('dropzone').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('file').click();}};
 for(const event of ['dragenter','dragover'])$('dropzone').addEventListener(event,e=>{e.preventDefault();$('dropzone').classList.add('drag');});
 for(const event of ['dragleave','drop'])$('dropzone').addEventListener(event,e=>{e.preventDefault();$('dropzone').classList.remove('drag');if(event==='drop')loadFile(e.dataTransfer.files[0]);});
